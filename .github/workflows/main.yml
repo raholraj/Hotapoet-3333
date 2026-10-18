@@ -1,0 +1,62 @@
+name: Build APKs
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Unzip project
+        run: unzip -q RemoteHotspotPro.zip
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install Android packages
+        run: |
+          yes | sdkmanager --licenses || true
+          sdkmanager "platforms;android-34" "build-tools;34.0.0"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.7
+
+      - name: Add google-services.json
+        env:
+          ADMIN_JSON: ${{ secrets.ADMIN_GOOGLE_SERVICES }}
+          USER_JSON: ${{ secrets.USER_GOOGLE_SERVICES }}
+        run: |
+          set -e
+          cd RemoteHotspotPro
+          if [ -n "$ADMIN_JSON" ] && [ -n "$USER_JSON" ]; then
+            printf '%s' "$ADMIN_JSON" > admin/google-services.json
+            printf '%s' "$USER_JSON" > user/google-services.json
+          elif [ -f ../google-services.json ]; then
+            cp ../google-services.json admin/google-services.json
+            cp ../google-services.json user/google-services.json
+          else
+            echo "google-services.json missing: add secrets or upload the file to the repo root"; exit 1
+          fi
+          grep -q "com.remotehotspot.admin" admin/google-services.json || { echo "admin package missing in google-services.json"; exit 1; }
+          grep -q "com.remotehotspot.user" user/google-services.json || { echo "user package missing in google-services.json"; exit 1; }
+
+      - name: Build debug APKs
+        working-directory: RemoteHotspotPro
+        env:
+          ADMIN_KEY: ${{ secrets.ADMIN_KEY }}
+        run: gradle assembleDebug --no-daemon --stacktrace
+
+      - name: Upload APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: apks
+          path: RemoteHotspotPro/*/build/outputs/apk/debug/*.apk
